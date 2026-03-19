@@ -103,18 +103,31 @@ export default function ChatPage() {
   }, [messages])
 
   async function sendMessage(e: FormEvent) {
-    e.preventDefault()
-    const body = text.trim()
-    if (!body) return
+  e.preventDefault()
+  const body = text.trim()
+  if (!body) return
 
-    setText('')
-    await supabase.from('messages').insert({
-  room_id: roomId,
-  user_id: userId,
-  username,
-  body,
-})
-  }
+  const { data: auth } = await supabase.auth.getUser()
+  if (!auth.user) return
+
+  // ALWAYS fetch fresh username before sending
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('username')
+    .eq('id', auth.user.id)
+    .single()
+
+  const safeUsername = profile?.username ?? 'User'
+
+  setText('')
+
+  await supabase.from('messages').insert({
+    room_id: roomId,
+    user_id: auth.user.id,
+    username: safeUsername,
+    body,
+  })
+}
 
   const mm = String(Math.floor(timeLeft / 60000)).padStart(2, '0')
   const ss = String(Math.floor((timeLeft % 60000) / 1000)).padStart(2, '0')
