@@ -22,6 +22,7 @@ type RawMessage = {
   body: string
   created_at: string
   user_id: string
+  username?: string | null
   profiles?: { username: string | null }[] | null
 }
 
@@ -61,12 +62,13 @@ export default function ChatPage() {
         .order('created_at', { ascending: true })
 
       const normalizedMessages: Message[] = ((data ?? []) as RawMessage[]).map((message) => ({
-        id: message.id,
-        body: message.body,
-        created_at: message.created_at,
-        user_id: message.user_id,
-        profiles: message.profiles?.[0] ?? null,
-      }))
+  id: message.id,
+  body: message.body,
+  created_at: message.created_at,
+  user_id: message.user_id,
+  username: message.username ?? null,
+  profiles: message.profiles?.[0] ?? null,
+}))
 
       setMessages(normalizedMessages)
 
