@@ -11,6 +11,7 @@ type Message = {
   body: string
   created_at: string
   user_id: string
+  username?: string | null   // ← ADD THIS LINE
   profiles?: {
     username: string | null
   } | null
@@ -33,6 +34,7 @@ export default function ChatPage() {
   const [userId, setUserId] = useState('')
   const [timeLeft, setTimeLeft] = useState(getTimeLeftMs())
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const [username, setUsername] = useState('')
 
   const topic = useMemo(() => getTopicForNow(), [timeLeft])
 
@@ -54,7 +56,7 @@ export default function ChatPage() {
 
       const { data } = await supabase
         .from('messages')
-        .select('id, body, created_at, user_id, profiles(username)')
+        .select('id, body, created_at, user_id, username, profiles(username)')
         .eq('room_id', roomId)
         .order('created_at', { ascending: true })
 
@@ -106,7 +108,12 @@ export default function ChatPage() {
     if (!body) return
 
     setText('')
-    await supabase.from('messages').insert({ room_id: roomId, user_id: userId, body })
+    await supabase.from('messages').insert({
+  room_id: roomId,
+  user_id: userId,
+  username,
+  body,
+})
   }
 
   const mm = String(Math.floor(timeLeft / 60000)).padStart(2, '0')
@@ -137,7 +144,7 @@ export default function ChatPage() {
 
           <div className="messages">
             {messages.map((message) => {
-              const name = message.profiles?.username || 'User'
+              const name = message.username || message.profiles?.username || 'User'
               return (
                 <div className="message" key={message.id}>
                   <div className="avatar">{name.slice(0, 1).toUpperCase()}</div>
