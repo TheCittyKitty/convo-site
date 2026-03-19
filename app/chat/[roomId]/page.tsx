@@ -37,12 +37,83 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const [username, setUsername] = useState('')
 
+  async function removePresence(userId: string, roomId: string) {
+  const { error } = await supabase
+    .from('room_members')
+    .delete()
+    .eq('room_id', roomId)
+    .eq('user_id', userId)
+
+  if (error) {
+    console.error('Presence remove failed:', error.message)
+  }
+}
+
+  async function upsertPresence(userId: string, roomId: string) {
+  const { error } = await supabase
+    .from('room_members')
+    .upsert(
+      {
+        room_id: roomId,
+        user_id: userId,
+        last_seen: new Date().toISOString(),
+      },
+      { onConflict: 'room_id,user_id' }
+    )
+
+  if (error) {
+    console.error('Presence upsert failed:', error.message)
+  }
+}
+
   const topic = useMemo(() => getTopicForNow(), [timeLeft])
 
   useEffect(() => {
     const timer = window.setInterval(() => setTimeLeft(getTimeLeftMs()), 1000)
     return () => window.clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+  let intervalId: ReturnType<typeof setInterval> | null = null
+  let currentUserId: string | null = null
+
+  async function startPresence() {
+    const { data: authData } = await supabase.auth.getUser()
+    const user = authData.user
+
+    if (!user || !roomId) return
+
+    currentUserId = user.id
+
+    // Register immediately on room load
+    await upsertPresence(user.id, roomId)
+
+    // Refresh presence every 15 seconds
+    intervalId = setInterval(() => {
+      upsertPresence(user.id, roomId)
+    }, 15000)
+  }
+
+  startPresence()
+
+  const handleBeforeUnload = () => {
+    if (!currentUserId || !roomId) return
+
+    // Fire-and-forget best effort
+    removePresence(currentUserId, roomId)
+  }
+
+  window.addEventListener('beforeunload', handleBeforeUnload)
+
+  return () => {
+    if (intervalId) clearInterval(intervalId)
+    window.removeEventListener('beforeunload', handleBeforeUnload)
+
+    if (currentUserId && roomId) {
+      removePresence(currentUserId, roomId)
+    }
+  }
+}, [roomId])
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null
@@ -62,6 +133,8 @@ export default function ChatPage() {
         .order('created_at', { ascending: true })
 
       const normalizedMessages: Message[] = ((data ?? []) as RawMessage[]).map((message) => ({
+
+        
   id: message.id,
   body: message.body,
   created_at: message.created_at,
