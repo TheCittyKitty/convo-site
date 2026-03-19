@@ -16,6 +16,14 @@ type Message = {
   } | null
 }
 
+type RawMessage = {
+  id: string
+  body: string
+  created_at: string
+  user_id: string
+  profiles?: { username: string | null }[] | null
+}
+
 export default function ChatPage() {
   const params = useParams<{ roomId: string }>()
   const roomId = params.roomId
@@ -50,7 +58,15 @@ export default function ChatPage() {
         .eq('room_id', roomId)
         .order('created_at', { ascending: true })
 
-      setMessages((data as Message[]) ?? [])
+      const normalizedMessages: Message[] = ((data ?? []) as RawMessage[]).map((message) => ({
+        id: message.id,
+        body: message.body,
+        created_at: message.created_at,
+        user_id: message.user_id,
+        profiles: message.profiles?.[0] ?? null,
+      }))
+
+      setMessages(normalizedMessages)
 
       channel = supabase
         .channel(`room-${roomId}`)
@@ -58,7 +74,7 @@ export default function ChatPage() {
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${roomId}` },
           async (payload) => {
-            const newRow = payload.new as Message
+            const newRow = payload.new as Omit<Message, 'profiles'>
             const { data: profile } = await supabase
               .from('profiles')
               .select('username')
@@ -114,7 +130,9 @@ export default function ChatPage() {
           <div className="topic-bar">
             <div className="small">Current topic</div>
             <div style={{ fontSize: 20, fontWeight: 700, marginTop: 4 }}>{topic}</div>
-            <div className="small" style={{ marginTop: 8 }}>Time till next topic: {mm}:{ss}</div>
+            <div className="small" style={{ marginTop: 8 }}>
+              Time till next topic: {mm}:{ss}
+            </div>
           </div>
 
           <div className="messages">
@@ -141,7 +159,9 @@ export default function ChatPage() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
               />
-              <button className="button" type="submit" style={{ width: 120 }}>Send</button>
+              <button className="button" type="submit" style={{ width: 120 }}>
+                Send
+              </button>
             </div>
           </form>
         </section>
