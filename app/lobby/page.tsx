@@ -5,6 +5,13 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { TopBar } from '@/components/TopBar'
 import { getTopicForNow } from '@/lib/topics'
+import Link from 'next/link'
+<Link
+  href="/feedback"
+  className="border border-[#4f6b8a] bg-[#102235] px-3 py-2 text-sm font-semibold text-[#e5efff] hover:bg-[#16304a]"
+>
+  Feedback
+</Link>
 
 type Room = {
   id: string
@@ -131,9 +138,20 @@ export default function LobbyPage() {
       <TopBar />
       <main className="container">
         <div style={{ paddingTop: 22 }}>
-          <h1 style={{ marginBottom: 8 }}>Active chats</h1>
-          <div className="small">Webfishing-style room list. Only one room is needed right now.</div>
-        </div>
+  <div className="flex items-center justify-between">
+    <div>
+      <h1 style={{ marginBottom: 8 }}>Active chats</h1>
+      <div className="small">Webfishing-style room</div>
+    </div>
+
+    <Link
+      href="/feedback"
+      className="border border-[#4f6b8a] bg-[#102235] px-3 py-2 text-sm font-semibold text-[#e5efff] hover:bg-[#16304a]"
+    >
+      ⭐ Feedback
+    </Link>
+  </div>
+</div>
 
         {error && (
           <div className="small" style={{ color: '#ff8a8a', marginTop: 12 }}>
