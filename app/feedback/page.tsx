@@ -55,23 +55,18 @@ export default function FeedbackPage() {
     let resolvedUsername = 'Anonymous'
 
     if (user) {
-  const userId = user.id
-  setCurrentUserId(userId)
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('id', user.id)
+        .maybeSingle()
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('username')
-    .eq('id', userId)
-    .maybeSingle()
-
-  const resolvedUsername =
-    profile?.username?.trim() ||
-    user.user_metadata?.username ||
-    user.email?.split('@')[0] ||
-    'Anonymous'
-
-  setCurrentUsername(resolvedUsername)
-}
+      resolvedUsername =
+        profile?.username?.trim() ||
+        user.user_metadata?.username ||
+        user.email?.split('@')[0] ||
+        'Anonymous'
+    }
 
     setCurrentUsername(resolvedUsername)
 
@@ -121,9 +116,7 @@ export default function FeedbackPage() {
 
     merged.sort((a, b) => {
       if (b.likeCount !== a.likeCount) return b.likeCount - a.likeCount
-      return (
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     })
 
     setFeedback(merged)

@@ -2,16 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { TopBar } from '@/components/TopBar'
 import { getTopicForNow } from '@/lib/topics'
-import Link from 'next/link'
-<Link
-  href="/feedback"
-  className="border border-[#4f6b8a] bg-[#102235] px-3 py-2 text-sm font-semibold text-[#e5efff] hover:bg-[#16304a]"
->
-  Feedback
-</Link>
 
 type Room = {
   id: string
@@ -19,11 +13,16 @@ type Room = {
   capacity: number
 }
 
+type RoomWithCount = Room & {
+  memberCount: number
+}
+
+const ROOM_CAPACITY = 7
+
 export default function LobbyPage() {
   const router = useRouter()
-  const [room, setRoom] = useState<Room | null>(null)
-  const [memberCount, setMemberCount] = useState(0)
-  const [joining, setJoining] = useState(false)
+  const [rooms, setRooms] = useState<RoomWithCount[]>([])
+  const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function fetchActiveMemberCount(roomId: string) {
@@ -39,6 +38,93 @@ export default function LobbyPage() {
     return count ?? 0
   }
 
+  async function fetchRoomsWithCounts() {
+    const { data: roomData, error: roomError } = await supabase
+      .from('rooms')
+      .select('*')
+      .order('created_at', { ascending: true })
+
+    if (roomError || !roomData) {
+      return []
+    }
+
+    const roomsWithCounts = await Promise.all(
+      roomData.map(async (room: Room) => {
+        const memberCount = await fetchActiveMemberCount(room.id)
+        return {
+          ...room,
+          memberCount,
+        }
+      })
+    )
+
+    return roomsWithCounts
+  }
+
+  async function createRoom() {
+    const topic = getTopicForNow()
+    const roomNumber = Date.now()
+
+    const { data, error } = await supabase
+      .from('rooms')
+      .insert({
+        name: `Room ${roomNumber}`,
+        capacity: ROOM_CAPACITY,
+      })
+      .select('*')
+      .single()
+
+    if (error || !data) {
+      return null
+    }
+
+    return {
+      ...data,
+      memberCount: 0,
+      topic,
+    }
+  }
+
+  async function cleanupAndEnsureRooms() {
+    let currentRooms = await fetchRoomsWithCounts()
+
+    if (currentRooms.length === 0) {
+      await createRoom()
+      currentRooms = await fetchRoomsWithCounts()
+    }
+
+    const emptyRooms = currentRooms.filter((room) => room.memberCount === 0)
+
+    if (currentRooms.length > 1 && emptyRooms.length > 0) {
+      const emptyRoomIds = emptyRooms.map((room) => room.id)
+
+      const { error: deleteError } = await supabase
+        .from('rooms')
+        .delete()
+        .in('id', emptyRoomIds)
+
+      if (!deleteError) {
+        currentRooms = await fetchRoomsWithCounts()
+      }
+    }
+
+    const allRoomsFull =
+      currentRooms.length > 0 &&
+      currentRooms.every((room) => room.memberCount >= room.capacity)
+
+    if (allRoomsFull) {
+      await createRoom()
+      currentRooms = await fetchRoomsWithCounts()
+    }
+
+    currentRooms.sort((a, b) => {
+      if (a.memberCount !== b.memberCount) return b.memberCount - a.memberCount
+      return a.name.localeCompare(b.name)
+    })
+
+    setRooms(currentRooms)
+  }
+
   useEffect(() => {
     let mounted = true
     let refreshId: ReturnType<typeof setInterval> | null = null
@@ -51,28 +137,13 @@ export default function LobbyPage() {
         return
       }
 
-      const { data: roomData, error: roomError } = await supabase
-        .from('rooms')
-        .select('*')
-        .limit(1)
-        .single()
-
-      if (roomError || !roomData) {
-        if (mounted) setRoom(null)
-        return
-      }
+      await cleanupAndEnsureRooms()
 
       if (!mounted) return
-      setRoom(roomData)
-
-      const count = await fetchActiveMemberCount(roomData.id)
-      if (!mounted) return
-      setMemberCount(count)
 
       refreshId = setInterval(async () => {
-        const liveCount = await fetchActiveMemberCount(roomData.id)
         if (!mounted) return
-        setMemberCount(liveCount)
+        await cleanupAndEnsureRooms()
       }, 5000)
     }
 
@@ -85,9 +156,9 @@ export default function LobbyPage() {
   }, [router])
 
   async function handleJoin(roomId: string, capacity: number) {
-    if (joining) return
+    if (joiningRoomId) return
 
-    setJoining(true)
+    setJoiningRoomId(roomId)
     setError(null)
 
     try {
@@ -103,7 +174,7 @@ export default function LobbyPage() {
 
       if (currentCount >= capacity) {
         setError('This room is full.')
-        setMemberCount(currentCount)
+        await cleanupAndEnsureRooms()
         return
       }
 
@@ -123,35 +194,32 @@ export default function LobbyPage() {
         return
       }
 
-      const refreshedCount = await fetchActiveMemberCount(roomId)
-      setMemberCount(refreshedCount)
+      await cleanupAndEnsureRooms()
       router.push(`/chat/${roomId}`)
     } finally {
-      setJoining(false)
+      setJoiningRoomId(null)
     }
   }
-
-  const isFull = room ? memberCount >= room.capacity : false
 
   return (
     <div className="layout">
       <TopBar />
+
       <main className="container">
         <div style={{ paddingTop: 22 }}>
-  <div className="flex items-center justify-between">
-    <div>
-      <h1 style={{ marginBottom: 8 }}>Active chats</h1>
-      <div className="small">Webfishing-style room</div>
-    </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 style={{ marginBottom: 0 }}>Active chats</h1>
+            </div>
 
-    <Link
-      href="/feedback"
-      className="border border-[#4f6b8a] bg-[#102235] px-3 py-2 text-sm font-semibold text-[#e5efff] hover:bg-[#16304a]"
-    >
-      ⭐ Feedback
-    </Link>
-  </div>
-</div>
+            <Link
+              href="/feedback"
+              className="border border-[#4f6b8a] bg-[#102235] px-3 py-2 text-sm font-semibold text-[#e5efff] hover:bg-[#16304a]"
+            >
+              ⭐ Feedback
+            </Link>
+          </div>
+        </div>
 
         {error && (
           <div className="small" style={{ color: '#ff8a8a', marginTop: 12 }}>
@@ -160,35 +228,45 @@ export default function LobbyPage() {
         )}
 
         <div className="lobby-list">
-          {room ? (
-            <div className="room-row">
-              <div>
-                <div style={{ fontWeight: 700 }}>{room.name}</div>
-                <div className="small">Current topic: {getTopicForNow()}</div>
-              </div>
+          {rooms.length > 0 ? (
+            rooms.map((room) => {
+              const isFull = room.memberCount >= room.capacity
+              const isJoining = joiningRoomId === room.id
 
-              <div>
-                <div className="small">People</div>
-                <div>{memberCount} / {room.capacity}</div>
-              </div>
+              return (
+                <div key={room.id} className="room-row">
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '1.05rem', marginBottom: 4 }}>
+                      {getTopicForNow()}
+                    </div>
+                  </div>
 
-              <div>
-                <div className="small">Status</div>
-                <div>{isFull ? 'Full' : 'Open'}</div>
-              </div>
+                  <div>
+                    <div className="small">People</div>
+                    <div>
+                      {room.memberCount} / {room.capacity}
+                    </div>
+                  </div>
 
-              <button
-                type="button"
-                className="button"
-                style={{ textAlign: 'center' }}
-                onClick={() => handleJoin(room.id, room.capacity)}
-                disabled={joining || isFull}
-              >
-                {isFull ? 'Full' : joining ? 'Joining...' : 'Join'}
-              </button>
-            </div>
+                  <div>
+                    <div className="small">Status</div>
+                    <div>{isFull ? 'Full' : 'Open'}</div>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="button"
+                    style={{ textAlign: 'center' }}
+                    onClick={() => handleJoin(room.id, room.capacity)}
+                    disabled={!!joiningRoomId || isFull}
+                  >
+                    {isFull ? 'Full' : isJoining ? 'Joining...' : 'Join'}
+                  </button>
+                </div>
+              )
+            })
           ) : (
-            <div className="small">No room found yet. Run the SQL seed so the starter room exists.</div>
+            <div className="small">No rooms available right now.</div>
           )}
         </div>
       </main>
