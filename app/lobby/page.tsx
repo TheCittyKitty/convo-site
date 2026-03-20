@@ -24,6 +24,7 @@ export default function LobbyPage() {
 
     async function loadLobby() {
       const { data: authData } = await supabase.auth.getUser()
+      const cutoff = new Date(Date.now() - 45_000).toISOString()
 
       if (!authData.user) {
         router.replace('/')
@@ -45,6 +46,7 @@ export default function LobbyPage() {
         .from('room_members')
         .select('*', { count: 'exact', head: true })
         .eq('room_id', roomData.id)
+        .gt('last_seen', cutoff)
 
       if (!mounted) return
 
@@ -74,11 +76,12 @@ export default function LobbyPage() {
         return
       }
 
-      // Count current members in this room
+      const cutoff = new Date(Date.now() - 45_000).toISOString()
       const { count, error: countError } = await supabase
         .from('room_members')
         .select('*', { count: 'exact', head: true })
         .eq('room_id', roomId)
+        .gt('last_seen', cutoff)
 
       if (countError) {
         setError('Could not check room size.')
@@ -87,14 +90,12 @@ export default function LobbyPage() {
 
       const currentCount = count ?? 0
 
-      // If full, block entry
       if (currentCount >= capacity) {
         setError('This room is full.')
         setMemberCount(currentCount)
         return
       }
 
-      // Register this user as being in the room
       const { error: joinError } = await supabase
         .from('room_members')
         .upsert(
@@ -111,7 +112,14 @@ export default function LobbyPage() {
         return
       }
 
-      setMemberCount(currentCount + 1)
+      const refreshedCutoff = new Date(Date.now() - 45_000).toISOString()
+      const { count: refreshedCount } = await supabase
+        .from('room_members')
+        .select('*', { count: 'exact', head: true })
+        .eq('room_id', roomId)
+        .gt('last_seen', refreshedCutoff)
+
+      setMemberCount(refreshedCount ?? currentCount)
       router.push(`/chat/${roomId}`)
     } finally {
       setJoining(false)

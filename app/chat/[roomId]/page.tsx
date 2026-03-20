@@ -11,7 +11,7 @@ type Message = {
   body: string
   created_at: string
   user_id: string
-  username?: string | null   // ← ADD THIS LINE
+  username?: string | null
   profiles?: {
     username: string | null
   } | null
@@ -38,33 +38,33 @@ export default function ChatPage() {
   const [username, setUsername] = useState('')
 
   async function removePresence(userId: string, roomId: string) {
-  const { error } = await supabase
-    .from('room_members')
-    .delete()
-    .eq('room_id', roomId)
-    .eq('user_id', userId)
+    const { error } = await supabase
+      .from('room_members')
+      .delete()
+      .eq('room_id', roomId)
+      .eq('user_id', userId)
 
-  if (error) {
-    console.error('Presence remove failed:', error.message)
+    if (error) {
+      console.error('Presence remove failed:', error.message)
+    }
   }
-}
 
   async function upsertPresence(userId: string, roomId: string) {
-  const { error } = await supabase
-    .from('room_members')
-    .upsert(
-      {
-        room_id: roomId,
-        user_id: userId,
-        last_seen: new Date().toISOString(),
-      },
-      { onConflict: 'room_id,user_id' }
-    )
+    const { error } = await supabase
+      .from('room_members')
+      .upsert(
+        {
+          room_id: roomId,
+          user_id: userId,
+          last_seen: new Date().toISOString(),
+        },
+        { onConflict: 'room_id,user_id' }
+      )
 
-  if (error) {
-    console.error('Presence upsert failed:', error.message)
+    if (error) {
+      console.error('Presence upsert failed:', error.message)
+    }
   }
-}
 
   const topic = useMemo(() => getTopicForNow(), [timeLeft])
 
@@ -74,46 +74,58 @@ export default function ChatPage() {
   }, [])
 
   useEffect(() => {
-  let intervalId: ReturnType<typeof setInterval> | null = null
-  let currentUserId: string | null = null
+    let intervalId: ReturnType<typeof setInterval> | null = null
+    let currentUserId: string | null = null
 
-  async function startPresence() {
-    const { data: authData } = await supabase.auth.getUser()
-    const user = authData.user
+    async function startPresence() {
+      const { data: authData } = await supabase.auth.getUser()
+      const user = authData.user
 
-    if (!user || !roomId) return
+      if (!user || !roomId) return
 
-    currentUserId = user.id
+      currentUserId = user.id
 
-    // Register immediately on room load
-    await upsertPresence(user.id, roomId)
+      await upsertPresence(user.id, roomId)
 
-    // Refresh presence every 15 seconds
-    intervalId = setInterval(() => {
-      upsertPresence(user.id, roomId)
-    }, 15000)
-  }
+      intervalId = setInterval(() => {
+        upsertPresence(user.id, roomId)
+      }, 15000)
+    }
 
-  startPresence()
-
-  const handleBeforeUnload = () => {
-    if (!currentUserId || !roomId) return
-
-    // Fire-and-forget best effort
-    removePresence(currentUserId, roomId)
-  }
-
-  window.addEventListener('beforeunload', handleBeforeUnload)
-
-  return () => {
-    if (intervalId) clearInterval(intervalId)
-    window.removeEventListener('beforeunload', handleBeforeUnload)
-
-    if (currentUserId && roomId) {
+    function cleanupPresence() {
+      if (!currentUserId || !roomId) return
       removePresence(currentUserId, roomId)
     }
-  }
-}, [roomId])
+
+    startPresence()
+
+    const handleBeforeUnload = () => {
+      cleanupPresence()
+    }
+
+    const handlePageHide = () => {
+      cleanupPresence()
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        cleanupPresence()
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('pagehide', handlePageHide)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      if (intervalId) clearInterval(intervalId)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      window.removeEventListener('pagehide', handlePageHide)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+
+      cleanupPresence()
+    }
+  }, [roomId])
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null
@@ -133,15 +145,13 @@ export default function ChatPage() {
         .order('created_at', { ascending: true })
 
       const normalizedMessages: Message[] = ((data ?? []) as RawMessage[]).map((message) => ({
-
-        
-  id: message.id,
-  body: message.body,
-  created_at: message.created_at,
-  user_id: message.user_id,
-  username: message.username ?? null,
-  profiles: message.profiles?.[0] ?? null,
-}))
+        id: message.id,
+        body: message.body,
+        created_at: message.created_at,
+        user_id: message.user_id,
+        username: message.username ?? null,
+        profiles: message.profiles?.[0] ?? null,
+      }))
 
       setMessages(normalizedMessages)
 
@@ -178,31 +188,30 @@ export default function ChatPage() {
   }, [messages])
 
   async function sendMessage(e: FormEvent) {
-  e.preventDefault()
-  const body = text.trim()
-  if (!body) return
+    e.preventDefault()
+    const body = text.trim()
+    if (!body) return
 
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth.user) return
+    const { data: auth } = await supabase.auth.getUser()
+    if (!auth.user) return
 
-  // ALWAYS fetch fresh username before sending
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('username')
-    .eq('id', auth.user.id)
-    .single()
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', auth.user.id)
+      .single()
 
-  const safeUsername = profile?.username ?? 'User'
+    const safeUsername = profile?.username ?? 'User'
 
-  setText('')
+    setText('')
 
-  await supabase.from('messages').insert({
-    room_id: roomId,
-    user_id: auth.user.id,
-    username: safeUsername,
-    body,
-  })
-}
+    await supabase.from('messages').insert({
+      room_id: roomId,
+      user_id: auth.user.id,
+      username: safeUsername,
+      body,
+    })
+  }
 
   const mm = String(Math.floor(timeLeft / 60000)).padStart(2, '0')
   const ss = String(Math.floor((timeLeft % 60000) / 1000)).padStart(2, '0')
