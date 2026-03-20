@@ -19,12 +19,25 @@ export default function LobbyPage() {
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  async function fetchActiveMemberCount(roomId: string) {
+    const cutoff = new Date(Date.now() - 45_000).toISOString()
+
+    const { count, error } = await supabase
+      .from('room_members')
+      .select('*', { count: 'exact', head: true })
+      .eq('room_id', roomId)
+      .gt('last_seen', cutoff)
+
+    if (error) return 0
+    return count ?? 0
+  }
+
   useEffect(() => {
     let mounted = true
+    let refreshId: ReturnType<typeof setInterval> | null = null
 
     async function loadLobby() {
       const { data: authData } = await supabase.auth.getUser()
-      const cutoff = new Date(Date.now() - 45_000).toISOString()
 
       if (!authData.user) {
         router.replace('/')
@@ -42,22 +55,25 @@ export default function LobbyPage() {
         return
       }
 
-      const { count, error: countError } = await supabase
-        .from('room_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('room_id', roomData.id)
-        .gt('last_seen', cutoff)
-
       if (!mounted) return
-
       setRoom(roomData)
-      setMemberCount(countError ? 0 : (count ?? 0))
+
+      const count = await fetchActiveMemberCount(roomData.id)
+      if (!mounted) return
+      setMemberCount(count)
+
+      refreshId = setInterval(async () => {
+        const liveCount = await fetchActiveMemberCount(roomData.id)
+        if (!mounted) return
+        setMemberCount(liveCount)
+      }, 5000)
     }
 
     loadLobby()
 
     return () => {
       mounted = false
+      if (refreshId) clearInterval(refreshId)
     }
   }, [router])
 
@@ -76,19 +92,7 @@ export default function LobbyPage() {
         return
       }
 
-      const cutoff = new Date(Date.now() - 45_000).toISOString()
-      const { count, error: countError } = await supabase
-        .from('room_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('room_id', roomId)
-        .gt('last_seen', cutoff)
-
-      if (countError) {
-        setError('Could not check room size.')
-        return
-      }
-
-      const currentCount = count ?? 0
+      const currentCount = await fetchActiveMemberCount(roomId)
 
       if (currentCount >= capacity) {
         setError('This room is full.')
@@ -112,14 +116,8 @@ export default function LobbyPage() {
         return
       }
 
-      const refreshedCutoff = new Date(Date.now() - 45_000).toISOString()
-      const { count: refreshedCount } = await supabase
-        .from('room_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('room_id', roomId)
-        .gt('last_seen', refreshedCutoff)
-
-      setMemberCount(refreshedCount ?? currentCount)
+      const refreshedCount = await fetchActiveMemberCount(roomId)
+      setMemberCount(refreshedCount)
       router.push(`/chat/${roomId}`)
     } finally {
       setJoining(false)
