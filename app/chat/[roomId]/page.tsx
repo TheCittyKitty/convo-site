@@ -26,6 +26,11 @@ type RawMessage = {
   profiles?: { username: string | null }[] | null
 }
 
+type UserMenuState = {
+  id: string
+  name: string
+} | null
+
 export default function ChatPage() {
   const params = useParams<{ roomId: string }>()
   const roomId = params.roomId
@@ -36,8 +41,8 @@ export default function ChatPage() {
   const [userId, setUserId] = useState('')
   const [timeLeft, setTimeLeft] = useState(getTimeLeftMs())
   const [rememberedUserIds, setRememberedUserIds] = useState<string[]>([])
-  const [openMenuUserId, setOpenMenuUserId] = useState<string | null>(null)
   const [rememberLoadingUserId, setRememberLoadingUserId] = useState<string | null>(null)
+  const [openUserMenu, setOpenUserMenu] = useState<UserMenuState>(null)
 
   const bottomRef = useRef<HTMLDivElement | null>(null)
 
@@ -76,17 +81,16 @@ export default function ChatPage() {
       .select('remembered_id')
       .eq('rememberer_id', currentUserId)
 
-    if (error || !data) {
-      return
-    }
+    if (error || !data) return
 
     setRememberedUserIds(data.map((row) => row.remembered_id))
   }
 
   async function handleRememberUser(targetUserId: string) {
     if (!userId || !targetUserId || targetUserId === userId) return
+
     if (rememberedUserIds.includes(targetUserId)) {
-      setOpenMenuUserId(null)
+      setOpenUserMenu(null)
       return
     }
 
@@ -106,7 +110,7 @@ export default function ChatPage() {
       setRememberedUserIds((current) =>
         current.includes(targetUserId) ? current : [...current, targetUserId]
       )
-      setOpenMenuUserId(null)
+      setOpenUserMenu(null)
     } else {
       console.error('Remember failed:', error.message)
     }
@@ -132,7 +136,6 @@ export default function ChatPage() {
       if (!user || !roomId) return
 
       currentUserId = user.id
-
       await upsertPresence(user.id, roomId)
 
       intervalId = setInterval(() => {
@@ -170,7 +173,6 @@ export default function ChatPage() {
       window.removeEventListener('beforeunload', handleBeforeUnload)
       window.removeEventListener('pagehide', handlePageHide)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
-
       cleanupPresence()
     }
   }, [roomId])
@@ -237,17 +239,6 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  useEffect(() => {
-    function handleDocumentClick() {
-      setOpenMenuUserId(null)
-    }
-
-    document.addEventListener('click', handleDocumentClick)
-    return () => {
-      document.removeEventListener('click', handleDocumentClick)
-    }
-  }, [])
-
   async function sendMessage(e: FormEvent) {
     e.preventDefault()
     const body = text.trim()
@@ -277,9 +268,16 @@ export default function ChatPage() {
   const mm = String(Math.floor(timeLeft / 60000)).padStart(2, '0')
   const ss = String(Math.floor((timeLeft % 60000) / 1000)).padStart(2, '0')
 
+  const selectedUserId = openUserMenu?.id ?? null
+  const selectedUserName = openUserMenu?.name ?? 'User'
+  const selectedAlreadyRemembered = selectedUserId
+    ? rememberedUserIds.includes(selectedUserId)
+    : false
+
   return (
     <div className="layout">
       <TopBar />
+
       <main className="chat-grid">
         <aside className="sidebar">
           <div style={{ fontWeight: 700, marginBottom: 10 }}>Chats</div>
@@ -304,25 +302,23 @@ export default function ChatPage() {
             {messages.map((message) => {
               const name = message.username || message.profiles?.username || 'User'
               const isSelf = message.user_id === userId
-              const isRemembered = rememberedUserIds.includes(message.user_id)
-              const isMenuOpen = openMenuUserId === message.user_id
 
               return (
                 <div className="message" key={message.id}>
                   <div className="avatar">{name.slice(0, 1).toUpperCase()}</div>
 
-                  <div className="bubble" style={{ position: 'relative' }}>
+                  <div className="bubble">
                     <div style={{ marginBottom: 4 }}>
                       {isSelf ? (
                         <span style={{ fontWeight: 700 }}>{name}</span>
                       ) : (
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setOpenMenuUserId((current) =>
-                              current === message.user_id ? null : message.user_id
-                            )
+                          onClick={() => {
+                            setOpenUserMenu({
+                              id: message.user_id,
+                              name,
+                            })
                           }}
                           style={{
                             fontWeight: 700,
@@ -332,60 +328,12 @@ export default function ChatPage() {
                             margin: 0,
                             color: 'inherit',
                             cursor: 'pointer',
+                            textDecoration: 'underline',
+                            textUnderlineOffset: '2px',
                           }}
                         >
-                          {name}
+                          {name} ↗
                         </button>
-                      )}
-
-                      {isMenuOpen && !isSelf && (
-                        <div
-                          onClick={(e) => e.stopPropagation()}
-                          style={{
-                            position: 'absolute',
-                            top: 28,
-                            left: 0,
-                            zIndex: 20,
-                            minWidth: 220,
-                            padding: 10,
-                            border: '1px solid #4f6b8a',
-                            background: '#102235',
-                            boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
-                          }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleRememberUser(message.user_id)}
-                            disabled={isRemembered || rememberLoadingUserId === message.user_id}
-                            style={{
-                              display: 'block',
-                              width: '100%',
-                              textAlign: 'left',
-                              background: 'transparent',
-                              border: 'none',
-                              color: 'inherit',
-                              padding: 0,
-                              margin: 0,
-                              fontWeight: 700,
-                              cursor:
-                                isRemembered || rememberLoadingUserId === message.user_id
-                                  ? 'default'
-                                  : 'pointer',
-                              opacity:
-                                isRemembered || rememberLoadingUserId === message.user_id ? 0.75 : 1,
-                            }}
-                          >
-                            {rememberLoadingUserId === message.user_id
-                              ? 'Remembering...'
-                              : isRemembered
-                                ? 'Remembered'
-                                : 'Remember this person'}
-                          </button>
-
-                          <div className="small" style={{ marginTop: 6, opacity: 0.75 }}>
-                            You’ll see a heart on rooms they join.
-                          </div>
-                        </div>
                       )}
                     </div>
 
@@ -394,6 +342,7 @@ export default function ChatPage() {
                 </div>
               )
             })}
+
             <div ref={bottomRef} />
           </div>
 
@@ -416,6 +365,81 @@ export default function ChatPage() {
           </form>
         </section>
       </main>
+
+      {openUserMenu && (
+        <div
+          onClick={() => setOpenUserMenu(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 100,
+            background: 'rgba(0, 0, 0, 0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 320,
+              border: '1px solid #4f6b8a',
+              background: '#102235',
+              boxShadow: '0 12px 30px rgba(0,0,0,0.35)',
+              padding: 16,
+              borderRadius: 12,
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>{selectedUserName}</div>
+
+            <button
+              type="button"
+              onClick={() => selectedUserId && handleRememberUser(selectedUserId)}
+              disabled={!selectedUserId || selectedAlreadyRemembered || rememberLoadingUserId === selectedUserId}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                background: 'transparent',
+                border: 'none',
+                color: 'inherit',
+                padding: 0,
+                margin: 0,
+                fontWeight: 700,
+                cursor:
+                  !selectedUserId || selectedAlreadyRemembered || rememberLoadingUserId === selectedUserId
+                    ? 'default'
+                    : 'pointer',
+                opacity:
+                  !selectedUserId || selectedAlreadyRemembered || rememberLoadingUserId === selectedUserId
+                    ? 0.75
+                    : 1,
+              }}
+            >
+              {rememberLoadingUserId === selectedUserId
+                ? 'Remembering...'
+                : selectedAlreadyRemembered
+                  ? 'Remembered'
+                  : 'Remember this person'}
+            </button>
+
+            <div className="small" style={{ marginTop: 8, opacity: 0.8 }}>
+              You’ll see a heart on rooms they join.
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setOpenUserMenu(null)}
+              className="button"
+              style={{ marginTop: 14, width: '100%' }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

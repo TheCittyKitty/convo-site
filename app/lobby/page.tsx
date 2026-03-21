@@ -25,6 +25,7 @@ export default function LobbyPage() {
   const [rooms, setRooms] = useState<RoomWithCount[]>([])
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [onlineCount, setOnlineCount] = useState(0)
 
   async function fetchActiveMemberCount(roomId: string) {
     const cutoff = new Date(Date.now() - 45_000).toISOString()
@@ -126,6 +127,23 @@ export default function LobbyPage() {
     return roomsWithCounts
   }
 
+  async function fetchOnlineUserCount() {
+  const cutoff = new Date(Date.now() - 45_000).toISOString()
+
+  const { data, error } = await supabase
+    .from('room_members')
+    .select('user_id')
+    .gt('last_seen', cutoff)
+
+  if (error || !data) {
+    setOnlineCount(0)
+    return
+  }
+
+  const uniqueUsers = new Set(data.map((row) => row.user_id))
+  setOnlineCount(uniqueUsers.size)
+}
+
   async function createRoom() {
     const roomNumber = Date.now()
 
@@ -204,12 +222,14 @@ export default function LobbyPage() {
       const currentUserId = authData.user.id
 
       await cleanupAndEnsureRooms(currentUserId)
+      await fetchOnlineUserCount()
 
       if (!mounted) return
 
       refreshId = setInterval(async () => {
         if (!mounted) return
         await cleanupAndEnsureRooms(currentUserId)
+        await fetchOnlineUserCount()
       }, 5000)
     }
 
