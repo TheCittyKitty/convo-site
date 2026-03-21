@@ -256,7 +256,11 @@ export default function ChatPage() {
           </div>
 
           <form className="compose" onSubmit={sendMessage}>
-            <div className="row">
+  <div className="small" style={{ marginBottom: 6, opacity: 0.7 }}>
+    This conversation resets daily.
+  </div>
+
+  <div className="row">
               <input
                 className="input"
                 placeholder="Send a message"
