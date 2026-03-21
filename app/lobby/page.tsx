@@ -15,6 +15,7 @@ type Room = {
 
 type RoomWithCount = Room & {
   memberCount: number
+  rememberedNames: string[]
 }
 
 const ROOM_CAPACITY = 7
@@ -38,7 +39,67 @@ export default function LobbyPage() {
     return count ?? 0
   }
 
-  async function fetchRoomsWithCounts() {
+  async function fetchRememberedUsersByRoom(roomIds: string[], currentUserId: string) {
+    if (roomIds.length === 0) return {}
+
+    const cutoff = new Date(Date.now() - 45_000).toISOString()
+
+    const { data: rememberedRows, error: rememberedError } = await supabase
+      .from('remembers')
+      .select('remembered_id')
+      .eq('rememberer_id', currentUserId)
+
+    if (rememberedError || !rememberedRows || rememberedRows.length === 0) {
+      return {} as Record<string, string[]>
+    }
+
+    const rememberedIds = rememberedRows.map((row) => row.remembered_id)
+
+    const { data: activeRememberedMembers, error: membersError } = await supabase
+      .from('room_members')
+      .select('room_id, user_id')
+      .in('room_id', roomIds)
+      .in('user_id', rememberedIds)
+      .gt('last_seen', cutoff)
+
+    if (membersError || !activeRememberedMembers || activeRememberedMembers.length === 0) {
+      return {} as Record<string, string[]>
+    }
+
+    const activeUserIds = [...new Set(activeRememberedMembers.map((row) => row.user_id))]
+
+    const { data: profiles, error: profilesError } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .in('id', activeUserIds)
+
+    if (profilesError || !profiles) {
+      return {} as Record<string, string[]>
+    }
+
+    const usernameById = new Map(
+      profiles.map((profile) => [profile.id, profile.username || 'User'])
+    )
+
+    const namesByRoom: Record<string, string[]> = {}
+
+    for (const member of activeRememberedMembers) {
+      const username = usernameById.get(member.user_id)
+      if (!username) continue
+
+      if (!namesByRoom[member.room_id]) {
+        namesByRoom[member.room_id] = []
+      }
+
+      if (!namesByRoom[member.room_id].includes(username)) {
+        namesByRoom[member.room_id].push(username)
+      }
+    }
+
+    return namesByRoom
+  }
+
+  async function fetchRoomsWithCounts(currentUserId: string) {
     const { data: roomData, error: roomError } = await supabase
       .from('rooms')
       .select('*')
@@ -48,12 +109,16 @@ export default function LobbyPage() {
       return []
     }
 
+    const roomIds = roomData.map((room: Room) => room.id)
+    const rememberedNamesByRoom = await fetchRememberedUsersByRoom(roomIds, currentUserId)
+
     const roomsWithCounts = await Promise.all(
       roomData.map(async (room: Room) => {
         const memberCount = await fetchActiveMemberCount(room.id)
         return {
           ...room,
           memberCount,
+          rememberedNames: rememberedNamesByRoom[room.id] ?? [],
         }
       })
     )
@@ -62,7 +127,6 @@ export default function LobbyPage() {
   }
 
   async function createRoom() {
-    const topic = getTopicForNow()
     const roomNumber = Date.now()
 
     const { data, error } = await supabase
@@ -81,16 +145,16 @@ export default function LobbyPage() {
     return {
       ...data,
       memberCount: 0,
-      topic,
+      rememberedNames: [],
     }
   }
 
-  async function cleanupAndEnsureRooms() {
-    let currentRooms = await fetchRoomsWithCounts()
+  async function cleanupAndEnsureRooms(currentUserId: string) {
+    let currentRooms = await fetchRoomsWithCounts(currentUserId)
 
     if (currentRooms.length === 0) {
       await createRoom()
-      currentRooms = await fetchRoomsWithCounts()
+      currentRooms = await fetchRoomsWithCounts(currentUserId)
     }
 
     const emptyRooms = currentRooms.filter((room) => room.memberCount === 0)
@@ -104,7 +168,7 @@ export default function LobbyPage() {
         .in('id', emptyRoomIds)
 
       if (!deleteError) {
-        currentRooms = await fetchRoomsWithCounts()
+        currentRooms = await fetchRoomsWithCounts(currentUserId)
       }
     }
 
@@ -114,7 +178,7 @@ export default function LobbyPage() {
 
     if (allRoomsFull) {
       await createRoom()
-      currentRooms = await fetchRoomsWithCounts()
+      currentRooms = await fetchRoomsWithCounts(currentUserId)
     }
 
     currentRooms.sort((a, b) => {
@@ -137,13 +201,15 @@ export default function LobbyPage() {
         return
       }
 
-      await cleanupAndEnsureRooms()
+      const currentUserId = authData.user.id
+
+      await cleanupAndEnsureRooms(currentUserId)
 
       if (!mounted) return
 
       refreshId = setInterval(async () => {
         if (!mounted) return
-        await cleanupAndEnsureRooms()
+        await cleanupAndEnsureRooms(currentUserId)
       }, 5000)
     }
 
@@ -174,7 +240,7 @@ export default function LobbyPage() {
 
       if (currentCount >= capacity) {
         setError('This room is full.')
-        await cleanupAndEnsureRooms()
+        await cleanupAndEnsureRooms(user.id)
         return
       }
 
@@ -194,7 +260,7 @@ export default function LobbyPage() {
         return
       }
 
-      await cleanupAndEnsureRooms()
+      await cleanupAndEnsureRooms(user.id)
       router.push(`/chat/${roomId}`)
     } finally {
       setJoiningRoomId(null)
@@ -232,12 +298,30 @@ export default function LobbyPage() {
             rooms.map((room) => {
               const isFull = room.memberCount >= room.capacity
               const isJoining = joiningRoomId === room.id
+              const hasRememberedUser = room.rememberedNames.length > 0
 
               return (
                 <div key={room.id} className="room-row">
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: '1.05rem', marginBottom: 4 }}>
-                      {getTopicForNow()}
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: '1.05rem',
+                        marginBottom: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                      }}
+                    >
+                      <span>{getTopicForNow()}</span>
+                      {hasRememberedUser && (
+                        <span
+                          title={`You remembered: ${room.rememberedNames.join(', ')}`}
+                          style={{ fontSize: '1rem' }}
+                        >
+                          ❤️
+                        </span>
+                      )}
                     </div>
                   </div>
 

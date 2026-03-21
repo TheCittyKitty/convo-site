@@ -17,7 +17,7 @@ export function TopBar() {
       <div style={{ fontWeight: 700 }}>Convo Rooms</div>
       <div className="row">
         <Link href="/lobby">Lobby</Link>
-        <Link href="/settings">Settings</Link>
+        <Link href="/settings">Settings & Profile</Link>
         <button className="button secondary" style={{ width: 'auto' }} onClick={logOut}>
           Log out
         </button>

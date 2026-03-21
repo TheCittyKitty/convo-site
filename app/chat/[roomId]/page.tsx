@@ -30,12 +30,16 @@ export default function ChatPage() {
   const params = useParams<{ roomId: string }>()
   const roomId = params.roomId
   const router = useRouter()
+
   const [messages, setMessages] = useState<Message[]>([])
   const [text, setText] = useState('')
   const [userId, setUserId] = useState('')
   const [timeLeft, setTimeLeft] = useState(getTimeLeftMs())
+  const [rememberedUserIds, setRememberedUserIds] = useState<string[]>([])
+  const [openMenuUserId, setOpenMenuUserId] = useState<string | null>(null)
+  const [rememberLoadingUserId, setRememberLoadingUserId] = useState<string | null>(null)
+
   const bottomRef = useRef<HTMLDivElement | null>(null)
-  const [username, setUsername] = useState('')
 
   async function removePresence(userId: string, roomId: string) {
     const { error } = await supabase
@@ -64,6 +68,50 @@ export default function ChatPage() {
     if (error) {
       console.error('Presence upsert failed:', error.message)
     }
+  }
+
+  async function loadRememberedUsers(currentUserId: string) {
+    const { data, error } = await supabase
+      .from('remembers')
+      .select('remembered_id')
+      .eq('rememberer_id', currentUserId)
+
+    if (error || !data) {
+      return
+    }
+
+    setRememberedUserIds(data.map((row) => row.remembered_id))
+  }
+
+  async function handleRememberUser(targetUserId: string) {
+    if (!userId || !targetUserId || targetUserId === userId) return
+    if (rememberedUserIds.includes(targetUserId)) {
+      setOpenMenuUserId(null)
+      return
+    }
+
+    setRememberLoadingUserId(targetUserId)
+
+    const { error } = await supabase
+      .from('remembers')
+      .upsert(
+        {
+          rememberer_id: userId,
+          remembered_id: targetUserId,
+        },
+        { onConflict: 'rememberer_id,remembered_id' }
+      )
+
+    if (!error) {
+      setRememberedUserIds((current) =>
+        current.includes(targetUserId) ? current : [...current, targetUserId]
+      )
+      setOpenMenuUserId(null)
+    } else {
+      console.error('Remember failed:', error.message)
+    }
+
+    setRememberLoadingUserId(null)
   }
 
   const topic = useMemo(() => getTopicForNow(), [timeLeft])
@@ -136,7 +184,9 @@ export default function ChatPage() {
         router.replace('/')
         return
       }
+
       setUserId(auth.user.id)
+      await loadRememberedUsers(auth.user.id)
 
       const { data } = await supabase
         .from('messages')
@@ -186,6 +236,17 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    function handleDocumentClick() {
+      setOpenMenuUserId(null)
+    }
+
+    document.addEventListener('click', handleDocumentClick)
+    return () => {
+      document.removeEventListener('click', handleDocumentClick)
+    }
+  }, [])
 
   async function sendMessage(e: FormEvent) {
     e.preventDefault()
@@ -242,11 +303,92 @@ export default function ChatPage() {
           <div className="messages">
             {messages.map((message) => {
               const name = message.username || message.profiles?.username || 'User'
+              const isSelf = message.user_id === userId
+              const isRemembered = rememberedUserIds.includes(message.user_id)
+              const isMenuOpen = openMenuUserId === message.user_id
+
               return (
                 <div className="message" key={message.id}>
                   <div className="avatar">{name.slice(0, 1).toUpperCase()}</div>
-                  <div className="bubble">
-                    <div style={{ fontWeight: 700, marginBottom: 4 }}>{name}</div>
+
+                  <div className="bubble" style={{ position: 'relative' }}>
+                    <div style={{ marginBottom: 4 }}>
+                      {isSelf ? (
+                        <span style={{ fontWeight: 700 }}>{name}</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setOpenMenuUserId((current) =>
+                              current === message.user_id ? null : message.user_id
+                            )
+                          }}
+                          style={{
+                            fontWeight: 700,
+                            background: 'transparent',
+                            border: 'none',
+                            padding: 0,
+                            margin: 0,
+                            color: 'inherit',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {name}
+                        </button>
+                      )}
+
+                      {isMenuOpen && !isSelf && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            position: 'absolute',
+                            top: 28,
+                            left: 0,
+                            zIndex: 20,
+                            minWidth: 220,
+                            padding: 10,
+                            border: '1px solid #4f6b8a',
+                            background: '#102235',
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleRememberUser(message.user_id)}
+                            disabled={isRemembered || rememberLoadingUserId === message.user_id}
+                            style={{
+                              display: 'block',
+                              width: '100%',
+                              textAlign: 'left',
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'inherit',
+                              padding: 0,
+                              margin: 0,
+                              fontWeight: 700,
+                              cursor:
+                                isRemembered || rememberLoadingUserId === message.user_id
+                                  ? 'default'
+                                  : 'pointer',
+                              opacity:
+                                isRemembered || rememberLoadingUserId === message.user_id ? 0.75 : 1,
+                            }}
+                          >
+                            {rememberLoadingUserId === message.user_id
+                              ? 'Remembering...'
+                              : isRemembered
+                                ? 'Remembered'
+                                : 'Remember this person'}
+                          </button>
+
+                          <div className="small" style={{ marginTop: 6, opacity: 0.75 }}>
+                            You’ll see a heart on rooms they join.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     <div>{message.body}</div>
                   </div>
                 </div>
@@ -256,11 +398,11 @@ export default function ChatPage() {
           </div>
 
           <form className="compose" onSubmit={sendMessage}>
-  <div className="small" style={{ marginBottom: 6, opacity: 0.7 }}>
-    This conversation resets daily.
-  </div>
+            <div className="small" style={{ marginBottom: 6, opacity: 0.7 }}>
+              This conversation resets daily.
+            </div>
 
-  <div className="row">
+            <div className="row">
               <input
                 className="input"
                 placeholder="Send a message"
